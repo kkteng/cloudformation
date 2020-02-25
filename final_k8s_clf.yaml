@@ -1,0 +1,216 @@
+---
+Parameters:
+  SSHKey:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Default: Teng_keypair1
+  TengSG:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Please choose your security group
+    Default: sg-07167d0ae3a8ec538
+
+Resources:
+  master:
+    Type: 'AWS::EC2::Instance'
+    DependsOn:
+      - worker2eni
+      - worker1eni
+      - mastereni
+    Properties:
+      KeyName: !Ref SSHKey
+      InstanceType: t2.medium
+      AvailabilityZone: ap-southeast-1a
+      ImageId: ami-0f02b24005e4aec36
+      IamInstanceProfile: TengRole
+      Tags :
+        - Key: Name
+          Value: master
+      NetworkInterfaces:
+        - NetworkInterfaceId: !Ref mastereni
+          DeviceIndex: "0"
+      UserData:
+        Fn::Base64:
+          Fn::Sub:
+            - |
+              #!/bin/bash
+              yum update -y
+              hostnamectl set-hostname master
+              CONF="/etc/hosts"
+              PRIVATE_1=${Private1}
+              PRIVATE_2=${Private2}
+              PRIVATE_3=${Private3}
+              cat << EOF >> "$CONF"
+              $PRIVATE_1   worker2
+              $PRIVATE_2   worker1
+              $PRIVATE_3   master
+              EOF
+              cat <<EOF > /etc/yum.repos.d/kubernetes.repo
+              [kubernetes]
+              name=Kubernetes
+              baseurl=https://packages.cloud.google.com/yum/repos/kubernetes-el7-x86_64
+              enabled=1
+              gpgcheck=0
+              repo_gpgcheck=0
+              gpgkey=https://packages.cloud.google.com/yum/doc/yum-key.gpg https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
+              EOF
+              yum install -y docker
+              systemctl enable docker
+              systemctl start docker
+              yum install -y kubelet kubeadm kubectl
+              yum install -y tc
+              systemctl enable kubelet
+              systemctl start kubelet
+              echo  "net.bridge.bridge-nf-call-ip6tables = 1" >> /etc/sysctl.d/99-sysctl.conf
+              echo  "net.bridge.bridge-nf-call-iptables = 1" >> /etc/sysctl.d/99-sysctl.conf
+              sysctl -p
+              alias k=kubectl
+            - Private1: !GetAtt worker2eni.PrimaryPrivateIpAddress
+              Private2: !GetAtt worker1eni.PrimaryPrivateIpAddress
+              Private3: !GetAtt mastereni.PrimaryPrivateIpAddress
+  worker1:
+    Type: 'AWS::EC2::Instance'
+    DependsOn: mastereni
+    Properties:
+      KeyName: !Ref SSHKey
+      InstanceType: t2.micro
+      AvailabilityZone: ap-southeast-1a 
+      IamInstanceProfile: TengRole
+      ImageId: ami-0f02b24005e4aec36
+      Tags :
+        - Key: Name
+          Value: worker1
+      NetworkInterfaces:
+        - NetworkInterfaceId: !Ref worker1eni
+          DeviceIndex: "0"
+      UserData:
+        Fn::Base64:
+          Fn::Sub:
+            - |
+              #!/bin/bash
+              yum update -y
+              hostnamectl set-hostname worker1
+              CONF="/etc/hosts"
+              PRIVATE_1=${Private1}
+              PRIVATE_2=${Private2}
+              PRIVATE_3=${Private3}
+              cat << EOF >> "$CONF"
+              $PRIVATE_1   worker2
+              $PRIVATE_2   worker1
+              $PRIVATE_3   master
+              EOF
+              cat <<EOF > /etc/yum.repos.d/kubernetes.repo
+              [kubernetes]
+              name=Kubernetes
+              baseurl=https://packages.cloud.google.com/yum/repos/kubernetes-el7-x86_64
+              enabled=1
+              gpgcheck=0
+              repo_gpgcheck=0
+              gpgkey=https://packages.cloud.google.com/yum/doc/yum-key.gpg https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
+              EOF
+              yum install -y docker
+              systemctl enable docker
+              systemctl start docker
+              yum install -y kubelet kubeadm kubectl
+              yum install -y tc
+              systemctl enable kubelet
+              systemctl start kubelet
+              echo  "net.bridge.bridge-nf-call-ip6tables = 1" >> /etc/sysctl.d/99-sysctl.conf
+              echo  "net.bridge.bridge-nf-call-iptables = 1" >> /etc/sysctl.d/99-sysctl.conf
+              sysctl -p
+            - Private1: !GetAtt worker2eni.PrimaryPrivateIpAddress
+              Private2: !GetAtt worker1eni.PrimaryPrivateIpAddress
+              Private3: !GetAtt mastereni.PrimaryPrivateIpAddress
+  worker2:
+    Type: 'AWS::EC2::Instance'
+    DependsOn: mastereni
+    Properties:
+      KeyName: !Ref SSHKey
+      InstanceType: t2.micro
+      AvailabilityZone: ap-southeast-1a
+      IamInstanceProfile: TengRole
+      ImageId: ami-0f02b24005e4aec36
+      Tags :
+        - Key: Name
+          Value: worker2
+      NetworkInterfaces:
+        - NetworkInterfaceId: !Ref worker2eni
+          DeviceIndex: "0"
+      UserData:
+        Fn::Base64:
+          Fn::Sub:
+            - |
+              #!/bin/bash
+              yum update -y
+              hostnamectl set-hostname worker2
+              CONF="/etc/hosts"
+              PRIVATE_1=${Private1}
+              PRIVATE_2=${Private2}
+              PRIVATE_3=${Private3}
+              cat << EOF >> "$CONF"
+              $PRIVATE_1   worker2
+              $PRIVATE_2   worker1
+              $PRIVATE_3   master
+              EOF
+              cat <<EOF > /etc/yum.repos.d/kubernetes.repo
+              [kubernetes]
+              name=Kubernetes
+              baseurl=https://packages.cloud.google.com/yum/repos/kubernetes-el7-x86_64
+              enabled=1
+              gpgcheck=0
+              repo_gpgcheck=0
+              gpgkey=https://packages.cloud.google.com/yum/doc/yum-key.gpg https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
+              EOF
+              yum install -y docker
+              cat <<EOF >  /etc/docker/daemon.json 
+              {
+                "exec-opts": ["native.cgroupdriver=systemd"],
+                "log-driver": "json-file",
+                "log-opts": {
+                  "max-size": "100m"
+                },
+                "storage-driver": "overlay2",
+                "storage-opts": [
+                  "overlay2.override_kernel_check=true"
+                ]
+              }
+              EOF
+              mkdir -p /etc/systemd/system/docker.service.d
+              systemctl enable docker
+              systemctl start docker
+              yum install -y kubelet kubeadm kubectl
+              yum install -y tc
+              systemctl enable kubelet
+              systemctl start kubelet
+              echo  "net.bridge.bridge-nf-call-ip6tables = 1" >> /etc/sysctl.d/99-sysctl.conf
+              echo  "net.bridge.bridge-nf-call-iptables = 1" >> /etc/sysctl.d/99-sysctl.conf
+              sysctl -p
+            - Private1: !GetAtt worker2eni.PrimaryPrivateIpAddress
+              Private2: !GetAtt worker1eni.PrimaryPrivateIpAddress
+              Private3: !GetAtt mastereni.PrimaryPrivateIpAddress
+ 
+  IPAddress:    
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      InstanceId: !Ref 'master'
+      EIP: "18.138.194.121"  
+              
+  mastereni:
+    Type: 'AWS::EC2::NetworkInterface'
+    DependsOn: worker1eni
+    Properties: 
+      SubnetId: subnet-0dedfb394ab4af954
+      GroupSet:
+        - !Ref TengSG
+  worker1eni:
+    Type: 'AWS::EC2::NetworkInterface'
+    DependsOn: worker2eni
+    Properties: 
+      SubnetId: subnet-0dedfb394ab4af954
+      GroupSet:
+        - !Ref TengSG
+  worker2eni:
+    Type: 'AWS::EC2::NetworkInterface'
+    Properties: 
+      SubnetId: subnet-0dedfb394ab4af954
+      GroupSet:
+        - !Ref TengSG
